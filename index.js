@@ -13,6 +13,7 @@ const http = axios.create({
     timeout: 10000
 });
 
+// Manifest bắt buộc phải có "catalogs: []" để không bị lỗi Linter
 const manifest = {
     id: "org.nuvio.yanhh3d",
     version: "1.0.0",
@@ -20,7 +21,8 @@ const manifest = {
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
     resources: ["stream"],
     types: ["movie", "series"],
-    idPrefixes: ["tt"]
+    idPrefixes: ["tt"],
+    catalogs: []
 };
 
 const builder = new addonBuilder(manifest);
