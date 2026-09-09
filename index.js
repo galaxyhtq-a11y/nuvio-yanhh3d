@@ -13,13 +13,12 @@ const http = axios.create({
     timeout: 10000
 });
 
-// 1. Khai báo Manifest có Catalog để hiện ở trang chính
 const manifest = {
     id: "org.nuvio.yanhh3d",
-    version: "1.0.0",
+    version: "1.0.1",
     name: "Yanhh3d - Hoạt Hình 3D",
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
-    resources: ["catalog", "stream"], // Thêm "catalog" vào đây
+    resources: ["catalog", "stream"],
     types: ["series", "movie"],
     idPrefixes: ["yanhh3d_"],
     catalogs: [
@@ -33,7 +32,6 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// 2. Xử lý hiển thị danh sách phim ra trang chính
 builder.defineCatalogHandler(async ({ type, id }) => {
     if (type === 'series' && id === 'yanhh3d_catalog') {
         try {
@@ -41,20 +39,31 @@ builder.defineCatalogHandler(async ({ type, id }) => {
             const $ = cheerio.load(res.data);
             const metas = [];
 
-            // Cào danh sách phim trang chủ yanhh3d
-            $('article.item-s, .halim-item').each((i, el) => {
-                const title = $(el).find('.entry-title, .halim-post-title').text().trim();
+            // Quét các ô chứa phim trên yanhh3d
+            $('article, .item-s, .halim-item, .post-item').each((i, el) => {
+                const title = $(el).find('.entry-title, .halim-post-title, h2, h3').first().text().trim();
                 const link = $(el).find('a').first().attr('href');
-                const img = $(el).find('img').first().attr('src') || $(el).find('img').first().attr('data-src');
+                
+                // Tìm link ảnh từ nhiều thuộc tính khác nhau (lazy loading)
+                const imgEl = $(el).find('img').first();
+                let img = imgEl.attr('src') || imgEl.attr('data-src') || imgEl.attr('data-lazy-src') || imgEl.attr('srcset');
+
+                if (img && img.includes(' ')) {
+                    img = img.split(' ')[0];
+                }
 
                 if (title && link) {
-                    // Tạo ID riêng cho từng phim trên Yanhh3d
+                    let posterUrl = img || '';
+                    if (posterUrl.startsWith('//')) {
+                        posterUrl = 'https:' + posterUrl;
+                    }
+
                     const filmId = 'yanhh3d_' + encodeURIComponent(link);
                     metas.push({
                         id: filmId,
                         type: 'series',
                         name: title,
-                        poster: img && img.startsWith('//') ? 'https:' + img : img,
+                        poster: posterUrl,
                         description: `Xem ${title} Vietsub trên Yanhh3d`
                     });
                 }
@@ -69,7 +78,6 @@ builder.defineCatalogHandler(async ({ type, id }) => {
     return { metas: [] };
 });
 
-// 3. Xử lý lấy link phát video khi bấm vào phim
 builder.defineStreamHandler(async ({ type, id }) => {
     let targetUrl = '';
 
@@ -107,4 +115,4 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
-        
+    
