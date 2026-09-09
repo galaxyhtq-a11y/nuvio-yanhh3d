@@ -15,7 +15,7 @@ const http = axios.create({
 
 const manifest = {
     id: "org.nuvio.yanhh3d",
-    version: "1.0.6",
+    version: "1.0.7",
     name: "Yanhh3d - Hoạt Hình 3D",
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
     resources: ["catalog", "meta", "stream"],
@@ -148,7 +148,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
     return { meta: null };
 });
 
-// 3. Stream Handler - Quét đa Server & Lấy nguồn phát trực tiếp
+// 3. Stream Handler - Hỗ trợ Request Headers tránh bị chặn
 builder.defineStreamHandler(async ({ type, id }) => {
     if (!id.startsWith('yanhh3d_')) return { streams: [] };
 
@@ -159,45 +159,26 @@ builder.defineStreamHandler(async ({ type, id }) => {
         const $ep = cheerio.load(epRes.data);
         const streams = [];
 
-        // Quét tất cả các thẻ iframe (các server nhúng)
+        // Tìm tất cả các thẻ iframe có chứa link nhúng
         $ep('iframe').each((i, el) => {
             let src = $ep(el).attr('src') || $ep(el).attr('data-src');
             if (src) {
                 if (src.startsWith('//')) src = 'https:' + src;
 
-                const serverName = $ep(el).parent().text().trim() || `Server ${i + 1}`;
                 streams.push({
-                    title: `Yanhh3d - ${serverName}`,
-                    url: src
+                    name: "Yanhh3d",
+                    title: `Server Vietsub ${i + 1} (Yêu cầu trình phát ngoài / VLC)`,
+                    url: src,
+                    behaviorHints: {
+                        notSupported: false,
+                        requestHeaders: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                            'Referer': DOMAIN
+                        }
+                    }
                 });
             }
         });
-
-        // Quét thêm các Server từ danh sách nút chọn Server (nếu có)
-        $ep('.server-item, .halim-server-item, #player-option').each((i, el) => {
-            const serverTitle = $ep(el).text().trim() || `Server Dự Phòng ${i + 1}`;
-            const link = $ep(el).attr('data-embed') || $ep(el).attr('data-link');
-
-            if (link) {
-                let fullLink = link.startsWith('//') ? 'https:' + link : link;
-                streams.push({
-                    title: `Yanhh3d - ${serverTitle}`,
-                    url: fullLink
-                });
-            }
-        });
-
-        // Nếu chỉ tìm thấy 1 link mặc định
-        if (streams.length === 0) {
-            let defaultSrc = $ep('#player-embed iframe').attr('src') || $ep('.watch-player iframe').attr('src');
-            if (defaultSrc) {
-                if (defaultSrc.startsWith('//')) defaultSrc = 'https:' + defaultSrc;
-                streams.push({
-                    title: `Yanhh3d - Server Vietsub Chuẩn`,
-                    url: defaultSrc
-                });
-            }
-        }
 
         return { streams };
     } catch (err) {
@@ -208,3 +189,4 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
+                
