@@ -7,15 +7,16 @@ const PORT = process.env.PORT || 7000;
 
 const http = axios.create({
     headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': DOMAIN
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Referer': DOMAIN,
+        'Origin': DOMAIN
     },
     timeout: 10000
 });
 
 const manifest = {
     id: "org.nuvio.yanhh3d",
-    version: "1.0.7",
+    version: "1.0.8",
     name: "Yanhh3d - Hoạt Hình 3D",
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
     resources: ["catalog", "meta", "stream"],
@@ -62,7 +63,7 @@ builder.defineCatalogHandler(async ({ type, id }) => {
                         type: 'series',
                         name: title,
                         poster: posterUrl,
-                        description: `Xem ${title} Vietsub trên Yanhh3d`
+                        description: `Xem ${title} Vietsub/Thuyết Minh trên Yanhh3d`
                     });
                 }
             });
@@ -135,7 +136,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     name: title,
                     poster: poster,
                     background: poster,
-                    description: `Xem ${title} Vietsub chất lượng cao tại Yanhh3d.`,
+                    description: `Xem ${title} Vietsub & Thuyết Minh tại Yanhh3d.`,
                     videos: videos
                 }
             };
@@ -148,7 +149,29 @@ builder.defineMetaHandler(async ({ type, id }) => {
     return { meta: null };
 });
 
-// 3. Stream Handler - Hỗ trợ Request Headers tránh bị chặn
+// Hàm hỗ trợ bóc tách link .m3u8 từ iframe hoặc player
+async function resolveDirectMediaUrl(embedUrl) {
+    try {
+        const response = await http.get(embedUrl, {
+            headers: { 'Referer': DOMAIN }
+        });
+        const html = response.data;
+
+        // Trích xuất link .m3u8 / .mp4 bằng Regex trong Javascript code
+        const m3u8Match = html.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/i) || 
+                          html.match(/(https?:\/\/[^"'\s]+\.mp4[^"'\s]*)/i) ||
+                          html.match(/file:\s*["'](https?:\/\/[^"'\s]+)["']/i);
+
+        if (m3u8Match && m3u8Match[1]) {
+            return m3u8Match[1];
+        }
+    } catch (e) {
+        console.error("Lỗi resolve link:", e.message);
+    }
+    return embedUrl; // Trả về link gốc nếu không bóc tách được
+}
+
+// 3. Stream Handler - Tự động bóc tách link .m3u8 xem trực tiếp trên Nuvio
 builder.defineStreamHandler(async ({ type, id }) => {
     if (!id.startsWith('yanhh3d_')) return { streams: [] };
 
@@ -158,27 +181,47 @@ builder.defineStreamHandler(async ({ type, id }) => {
         const epRes = await http.get(targetUrl);
         const $ep = cheerio.load(epRes.data);
         const streams = [];
+        const embedUrls = [];
 
-        // Tìm tất cả các thẻ iframe có chứa link nhúng
+        // 1. Quét iframe chính và các Server dự phòng trong trang
         $ep('iframe').each((i, el) => {
             let src = $ep(el).attr('src') || $ep(el).attr('data-src');
             if (src) {
                 if (src.startsWith('//')) src = 'https:' + src;
-
-                streams.push({
-                    name: "Yanhh3d",
-                    title: `Server Vietsub ${i + 1} (Yêu cầu trình phát ngoài / VLC)`,
-                    url: src,
-                    behaviorHints: {
-                        notSupported: false,
-                        requestHeaders: {
-                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                            'Referer': DOMAIN
-                        }
-                    }
-                });
+                const name = $ep(el).parent().text().trim() || `Server ${i + 1}`;
+                embedUrls.push({ name: name, url: src });
             }
         });
+
+        // 2. Quét các nút bấm chọn Server Thuyết minh / Vietsub
+        $ep('.server-item, .halim-server-item, .btn-episode, [data-embed]').each((i, el) => {
+            let link = $ep(el).attr('data-embed') || $ep(el).attr('data-link') || $ep(el).attr('href');
+            let name = $ep(el).text().trim() || `Server ${i + 1}`;
+
+            if (link && link.startsWith('http')) {
+                embedUrls.push({ name: name, url: link });
+            }
+        });
+
+        // 3. Bóc tách link .m3u8 trực tiếp cho từng Server
+        for (let idx = 0; idx < embedUrls.length; idx++) {
+            const item = embedUrls[idx];
+            const directUrl = await resolveDirectMediaUrl(item.url);
+
+            streams.push({
+                name: "Yanhh3d",
+                title: item.name.includes("Server") ? item.name : `Server ${idx + 1} (${item.name})`,
+                url: directUrl,
+                behaviorHints: {
+                    notSupported: false,
+                    requestHeaders: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                        'Referer': DOMAIN,
+                        'Origin': DOMAIN
+                    }
+                }
+            });
+        }
 
         return { streams };
     } catch (err) {
@@ -189,4 +232,4 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
-                
+            
