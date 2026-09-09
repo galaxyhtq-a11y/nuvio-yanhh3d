@@ -15,7 +15,7 @@ const http = axios.create({
 
 const manifest = {
     id: "org.nuvio.yanhh3d",
-    version: "1.0.4",
+    version: "1.0.5",
     name: "Yanhh3d - Hoạt Hình 3D",
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
     resources: ["catalog", "meta", "stream"],
@@ -32,7 +32,7 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// 1. Catalog lấy danh sách phim
+// 1. Catalog Handler
 builder.defineCatalogHandler(async ({ type, id }) => {
     if (type === 'series' && id === 'yanhh3d_catalog') {
         try {
@@ -49,23 +49,16 @@ builder.defineCatalogHandler(async ({ type, id }) => {
                 const imgEl = $(el).find('img').first();
                 let img = imgEl.attr('src') || imgEl.attr('data-src') || imgEl.attr('data-lazy-src') || imgEl.attr('srcset');
 
-                if (img && img.includes(' ')) {
-                    img = img.split(' ')[0];
-                }
+                if (img && img.includes(' ')) img = img.split(' ')[0];
 
                 const isExcluded = link.includes('/category/') || link.includes('/tag/') || link.includes('/page/') || link === DOMAIN || link === `${DOMAIN}/`;
 
                 if (title && title.length > 2 && img && !isExcluded) {
                     addedLinks.add(link);
+                    let posterUrl = img.startsWith('//') ? 'https:' + img : img;
 
-                    let posterUrl = img;
-                    if (posterUrl.startsWith('//')) {
-                        posterUrl = 'https:' + posterUrl;
-                    }
-
-                    const filmId = 'yanhh3d_' + encodeURIComponent(link);
                     metas.push({
-                        id: filmId,
+                        id: 'yanhh3d_' + encodeURIComponent(link),
                         type: 'series',
                         name: title,
                         poster: posterUrl,
@@ -82,7 +75,7 @@ builder.defineCatalogHandler(async ({ type, id }) => {
     return { metas: [] };
 });
 
-// 2. Meta Handler - Cào danh sách các tập phim để hiện nút chọn Tập
+// 2. Meta Handler - Quét triệt để danh sách tập và hình ảnh
 builder.defineMetaHandler(async ({ type, id }) => {
     if (id.startsWith('yanhh3d_')) {
         const targetUrl = decodeURIComponent(id.replace('yanhh3d_', ''));
@@ -91,46 +84,52 @@ builder.defineMetaHandler(async ({ type, id }) => {
             const $ = cheerio.load(res.data);
 
             const title = $('h1.entry-title, .post-title, h1').first().text().trim() || "Hoạt Hình 3D";
-            const imgEl = $('.poster img, .entry-content img, article img').first();
-            let img = imgEl.attr('src') || imgEl.attr('data-src');
+            const imgEl = $('.poster img, .entry-content img, article img, .halim-thumb img').first();
+            let poster = imgEl.attr('src') || imgEl.attr('data-src') || imgEl.attr('data-lazy-src');
 
-            if (img && img.startsWith('//')) {
-                img = 'https:' + img;
+            if (poster && poster.startsWith('//')) {
+                poster = 'https:' + poster;
             }
 
             const videos = [];
-            
-            // Cào các nút/link tập phim (dựa theo các lớp phổ biến như .halim-list-eps, .eps-list, a chứa chữ Tap)
-            $('.halim-list-eps a, .list-episodes a, .eps-list a, .entry-content a').each((i, el) => {
+            const addedEps = new Set();
+
+            // Quét tất cả thẻ a có khả năng là liên kết tập phim
+            $('a').each((i, el) => {
                 const epLink = $(el).attr('href');
                 const epText = $(el).text().trim();
 
-                // Lọc số tập từ tên nút (Ví dụ: "Tập 01", "1", "Tập 2")
-                const epMatch = epText.match(/\d+/);
-                if (epLink && epMatch) {
-                    const epNum = parseInt(epMatch[0], 10);
-                    const epId = 'yanhh3d_' + encodeURIComponent(epLink);
+                if (epLink && epLink.startsWith(DOMAIN) && !addedEps.has(epLink)) {
+                    // Kiểm tra nếu text hoặc đường dẫn có chứa dấu hiệu của tập (tap-1, tap-2, hoặc chữ Tập X)
+                    const isEpUrl = /\/tap-\d+/i.test(epLink) || /tập\s*\d+/i.test(epText) || /ep\s*\d+/i.test(epText);
+                    
+                    if (isEpUrl) {
+                        addedEps.add(epLink);
+                        const match = epText.match(/\d+/) || epLink.match(/tap-(\d+)/i);
+                        const epNum = match ? parseInt(match[1] || match[0], 10) : (videos.length + 1);
 
-                    videos.push({
-                        id: epId,
-                        title: `Tập ${epNum}`,
-                        season: 1,
-                        episode: epNum,
-                        released: new Date().toISOString()
-                    });
+                        videos.push({
+                            id: 'yanhh3d_' + encodeURIComponent(epLink),
+                            title: `Tập ${epNum}`,
+                            season: 1,
+                            episode: epNum,
+                            thumbnail: poster, // Gán poster phim làm hình đại diện cho tập
+                            released: new Date().toISOString()
+                        });
+                    }
                 }
             });
 
-            // Nếu không quét thấy các nút tập riêng lẻ, tạo mặc định Tập 1 dùng link hiện tại
+            // Trường hợp phim lẻ hoặc trang hiện tại chính là 1 tập phim
             if (videos.length === 0) {
                 videos.push({
                     id: id,
                     title: 'Tập 1',
                     season: 1,
-                    episode: 1
+                    episode: 1,
+                    thumbnail: poster
                 });
             } else {
-                // Sắp xếp tập theo thứ tự tăng dần 1, 2, 3...
                 videos.sort((a, b) => a.episode - b.episode);
             }
 
@@ -139,7 +138,8 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     id: id,
                     type: 'series',
                     name: title,
-                    poster: img,
+                    poster: poster,
+                    background: poster,
                     description: `Xem ${title} Vietsub chất lượng cao tại Yanhh3d.`,
                     videos: videos
                 }
@@ -158,21 +158,17 @@ builder.defineMetaHandler(async ({ type, id }) => {
     return { meta: null };
 });
 
-// 3. Stream Handler - Trả về nguồn phát video tương ứng với Tập đã chọn
+// 3. Stream Handler
 builder.defineStreamHandler(async ({ type, id }) => {
-    let targetUrl = '';
+    if (!id.startsWith('yanhh3d_')) return { streams: [] };
 
-    if (id.startsWith('yanhh3d_')) {
-        targetUrl = decodeURIComponent(id.replace('yanhh3d_', ''));
-    } else {
-        return { streams: [] };
-    }
+    const targetUrl = decodeURIComponent(id.replace('yanhh3d_', ''));
 
     try {
         const epRes = await http.get(targetUrl);
         const $ep = cheerio.load(epRes.data);
 
-        let streamUrl = $ep('iframe').attr('src') || $ep('#player-embed iframe').attr('src');
+        let streamUrl = $ep('iframe').attr('src') || $ep('#player-embed iframe').attr('src') || $ep('.watch-player iframe').attr('src');
 
         if (streamUrl && streamUrl.startsWith('//')) {
             streamUrl = 'https:' + streamUrl;
@@ -182,7 +178,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
             return {
                 streams: [
                     {
-                        title: `Yanhh3d - Bản chuẩn [Vietsub]`,
+                        title: `Yanhh3d - Server Vietsub`,
                         url: streamUrl
                     }
                 ]
@@ -196,4 +192,3 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
-            
