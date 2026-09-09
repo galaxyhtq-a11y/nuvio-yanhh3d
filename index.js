@@ -2,7 +2,7 @@ const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const axios = require('axios');
 const cheerio = require('cheerio');
 
-const DOMAIN = 'https://yanhh3d.ee';
+const DOMAIN = 'https://tram3d.my';
 const PORT = process.env.PORT || 7000;
 
 const http = axios.create({
@@ -15,27 +15,27 @@ const http = axios.create({
 });
 
 const manifest = {
-    id: "org.nuvio.yanhh3d",
-    version: "1.0.8",
-    name: "Yanhh3d - Hoạt Hình 3D",
-    description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
+    id: "org.nuvio.tram3d",
+    version: "1.1.0",
+    name: "Tram3D - Hoạt Hình 3D",
+    description: "Nguồn phát Hoạt Hình 3D Thuyết Minh & Vietsub từ tram3d.my",
     resources: ["catalog", "meta", "stream"],
     types: ["series", "movie"],
-    idPrefixes: ["yanhh3d_"],
+    idPrefixes: ["tram3d_"],
     catalogs: [
         {
             type: "series",
-            id: "yanhh3d_catalog",
-            name: "Yanhh3d - Phim Mới Cập Nhật"
+            id: "tram3d_catalog",
+            name: "Tram3D - Phim Mới Cập Nhật"
         }
     ]
 };
 
 const builder = new addonBuilder(manifest);
 
-// 1. Catalog Handler
+// 1. Catalog Handler - Danh mục phim từ Tram3D
 builder.defineCatalogHandler(async ({ type, id }) => {
-    if (type === 'series' && id === 'yanhh3d_catalog') {
+    if (type === 'series' && id === 'tram3d_catalog') {
         try {
             const res = await http.get(DOMAIN);
             const $ = cheerio.load(res.data);
@@ -43,8 +43,14 @@ builder.defineCatalogHandler(async ({ type, id }) => {
             const addedLinks = new Set();
 
             $('a').each((i, el) => {
-                const link = $(el).attr('href');
-                if (!link || !link.startsWith(DOMAIN) || addedLinks.has(link)) return;
+                let link = $(el).attr('href');
+                if (!link) return;
+
+                if (!link.startsWith('http')) {
+                    link = DOMAIN + (link.startsWith('/') ? '' : '/') + link;
+                }
+
+                if (!link.includes('tram3d.my') || addedLinks.has(link)) return;
 
                 const title = $(el).attr('title') || $(el).find('img').attr('alt') || $(el).text().trim();
                 const imgEl = $(el).find('img').first();
@@ -57,62 +63,74 @@ builder.defineCatalogHandler(async ({ type, id }) => {
                 if (title && title.length > 2 && img && !isExcluded) {
                     addedLinks.add(link);
                     let posterUrl = img.startsWith('//') ? 'https:' + img : img;
+                    if (!posterUrl.startsWith('http')) posterUrl = DOMAIN + posterUrl;
 
                     metas.push({
-                        id: 'yanhh3d_' + encodeURIComponent(link),
+                        id: 'tram3d_' + encodeURIComponent(link),
                         type: 'series',
                         name: title,
                         poster: posterUrl,
-                        description: `Xem ${title} Vietsub/Thuyết Minh trên Yanhh3d`
+                        description: `Xem ${title} Thuyết Minh / Vietsub tại Tram3D`
                     });
                 }
             });
 
             return { metas };
         } catch (err) {
+            console.error("Lỗi Catalog Tram3D:", err.message);
             return { metas: [] };
         }
     }
     return { metas: [] };
 });
 
-// 2. Meta Handler
+// 2. Meta Handler - Danh sách Tập & Poster
 builder.defineMetaHandler(async ({ type, id }) => {
-    if (id.startsWith('yanhh3d_')) {
-        const targetUrl = decodeURIComponent(id.replace('yanhh3d_', ''));
+    if (id.startsWith('tram3d_')) {
+        const targetUrl = decodeURIComponent(id.replace('tram3d_', ''));
         try {
             const res = await http.get(targetUrl);
             const $ = cheerio.load(res.data);
 
-            const title = $('h1.entry-title, .post-title, h1').first().text().trim() || "Hoạt Hình 3D";
-            const imgEl = $('.poster img, .entry-content img, article img, .halim-thumb img').first();
+            const title = $('h1.entry-title, .post-title, h1, .title').first().text().trim() || "Hoạt Hình 3D";
+            const imgEl = $('.poster img, .entry-content img, article img, .halim-thumb img, .film-info img').first();
             let poster = imgEl.attr('src') || imgEl.attr('data-src') || imgEl.attr('data-lazy-src');
 
-            if (poster && poster.startsWith('//')) poster = 'https:' + poster;
+            if (poster) {
+                if (poster.startsWith('//')) poster = 'https:' + poster;
+                else if (!poster.startsWith('http')) poster = DOMAIN + poster;
+            }
 
             const videos = [];
             const addedEps = new Set();
 
+            // Bóc tách danh sách tập phim
             $('a').each((i, el) => {
-                const epLink = $(el).attr('href');
+                let epLink = $(el).attr('href');
                 const epText = $(el).text().trim();
 
-                if (epLink && epLink.startsWith(DOMAIN) && !addedEps.has(epLink)) {
-                    const isEpUrl = /\/tap-\d+/i.test(epLink) || /tập\s*\d+/i.test(epText) || /ep\s*\d+/i.test(epText);
-                    
-                    if (isEpUrl) {
-                        addedEps.add(epLink);
-                        const match = epText.match(/\d+/) || epLink.match(/tap-(\d+)/i);
-                        const epNum = match ? parseInt(match[1] || match[0], 10) : (videos.length + 1);
+                if (epLink) {
+                    if (!epLink.startsWith('http')) {
+                        epLink = DOMAIN + (epLink.startsWith('/') ? '' : '/') + epLink;
+                    }
 
-                        videos.push({
-                            id: 'yanhh3d_' + encodeURIComponent(epLink),
-                            title: `Tập ${epNum}`,
-                            season: 1,
-                            episode: epNum,
-                            thumbnail: poster,
-                            released: new Date().toISOString()
-                        });
+                    if (epLink.includes('tram3d.my') && !addedEps.has(epLink)) {
+                        const isEpUrl = /\/tap-\d+/i.test(epLink) || /tập\s*\d+/i.test(epText) || /ep\s*\d+/i.test(epText);
+                        
+                        if (isEpUrl) {
+                            addedEps.add(epLink);
+                            const match = epText.match(/\d+/) || epLink.match(/tap-(\d+)/i);
+                            const epNum = match ? parseInt(match[1] || match[0], 10) : (videos.length + 1);
+
+                            videos.push({
+                                id: 'tram3d_' + encodeURIComponent(epLink),
+                                title: `Tập ${epNum}`,
+                                season: 1,
+                                episode: epNum,
+                                thumbnail: poster,
+                                released: new Date().toISOString()
+                            });
+                        }
                     }
                 }
             });
@@ -136,20 +154,21 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     name: title,
                     poster: poster,
                     background: poster,
-                    description: `Xem ${title} Vietsub & Thuyết Minh tại Yanhh3d.`,
+                    description: `Xem ${title} Thuyết Minh chất lượng cao tại Tram3D.`,
                     videos: videos
                 }
             };
         } catch (err) {
+            console.error("Lỗi Meta Tram3D:", err.message);
             return {
-                meta: { id: id, type: 'series', name: "Yanhh3d Movie", description: "Chi tiết phim Yanhh3d" }
+                meta: { id: id, type: 'series', name: "Tram3D Donghua", description: "Chi tiết phim Tram3D" }
             };
         }
     }
     return { meta: null };
 });
 
-// Hàm hỗ trợ bóc tách link .m3u8 từ iframe hoặc player
+// Hàm hỗ trợ bóc tách link video gốc .m3u8 / .mp4
 async function resolveDirectMediaUrl(embedUrl) {
     try {
         const response = await http.get(embedUrl, {
@@ -157,25 +176,24 @@ async function resolveDirectMediaUrl(embedUrl) {
         });
         const html = response.data;
 
-        // Trích xuất link .m3u8 / .mp4 bằng Regex trong Javascript code
-        const m3u8Match = html.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/i) || 
-                          html.match(/(https?:\/\/[^"'\s]+\.mp4[^"'\s]*)/i) ||
-                          html.match(/file:\s*["'](https?:\/\/[^"'\s]+)["']/i);
+        const match = html.match(/(https?:\/\/[^"'\s]+\.m3u8[^"'\s]*)/i) || 
+                      html.match(/(https?:\/\/[^"'\s]+\.mp4[^"'\s]*)/i) ||
+                      html.match(/file:\s*["'](https?:\/\/[^"'\s]+)["']/i);
 
-        if (m3u8Match && m3u8Match[1]) {
-            return m3u8Match[1];
+        if (match && match[1]) {
+            return match[1];
         }
     } catch (e) {
-        console.error("Lỗi resolve link:", e.message);
+        console.error("Lỗi resolve link media:", e.message);
     }
-    return embedUrl; // Trả về link gốc nếu không bóc tách được
+    return embedUrl;
 }
 
-// 3. Stream Handler - Tự động bóc tách link .m3u8 xem trực tiếp trên Nuvio
+// 3. Stream Handler - Quét đầy đủ các Server (Thuyết Minh / Vietsub)
 builder.defineStreamHandler(async ({ type, id }) => {
-    if (!id.startsWith('yanhh3d_')) return { streams: [] };
+    if (!id.startsWith('tram3d_')) return { streams: [] };
 
-    const targetUrl = decodeURIComponent(id.replace('yanhh3d_', ''));
+    const targetUrl = decodeURIComponent(id.replace('tram3d_', ''));
 
     try {
         const epRes = await http.get(targetUrl);
@@ -183,7 +201,7 @@ builder.defineStreamHandler(async ({ type, id }) => {
         const streams = [];
         const embedUrls = [];
 
-        // 1. Quét iframe chính và các Server dự phòng trong trang
+        // 1. Tìm các thẻ iframe phát trực tiếp
         $ep('iframe').each((i, el) => {
             let src = $ep(el).attr('src') || $ep(el).attr('data-src');
             if (src) {
@@ -193,24 +211,28 @@ builder.defineStreamHandler(async ({ type, id }) => {
             }
         });
 
-        // 2. Quét các nút bấm chọn Server Thuyết minh / Vietsub
-        $ep('.server-item, .halim-server-item, .btn-episode, [data-embed]').each((i, el) => {
+        // 2. Tìm danh sách các nút chọn Server Thuyết Minh / Vietsub / Dự Phòng
+        $ep('.server-item, .halim-server-item, .btn-episode, [data-embed], .sv-item').each((i, el) => {
             let link = $ep(el).attr('data-embed') || $ep(el).attr('data-link') || $ep(el).attr('href');
             let name = $ep(el).text().trim() || `Server ${i + 1}`;
 
-            if (link && link.startsWith('http')) {
+            if (link) {
+                if (link.startsWith('//')) link = 'https:' + link;
+                else if (!link.startsWith('http')) link = DOMAIN + (link.startsWith('/') ? '' : '/') + link;
                 embedUrls.push({ name: name, url: link });
             }
         });
 
-        // 3. Bóc tách link .m3u8 trực tiếp cho từng Server
+        // 3. Trích xuất nguồn video và gán Headers cho Nuvio
         for (let idx = 0; idx < embedUrls.length; idx++) {
             const item = embedUrls[idx];
             const directUrl = await resolveDirectMediaUrl(item.url);
 
+            let serverTitle = item.name.length > 1 ? item.name : `Server ${idx + 1}`;
+
             streams.push({
-                name: "Yanhh3d",
-                title: item.name.includes("Server") ? item.name : `Server ${idx + 1} (${item.name})`,
+                name: "Tram3D",
+                title: `${serverTitle}`,
                 url: directUrl,
                 behaviorHints: {
                     notSupported: false,
@@ -225,11 +247,11 @@ builder.defineStreamHandler(async ({ type, id }) => {
 
         return { streams };
     } catch (err) {
-        console.error("Lỗi lấy stream:", err.message);
+        console.error("Lỗi lấy Stream Tram3D:", err.message);
     }
 
     return { streams: [] };
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
-            
+                
