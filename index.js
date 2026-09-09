@@ -13,10 +13,9 @@ const http = axios.create({
     timeout: 10000
 });
 
-// Bổ sung "meta" vào danh sách resources
 const manifest = {
     id: "org.nuvio.yanhh3d",
-    version: "1.0.3",
+    version: "1.0.4",
     name: "Yanhh3d - Hoạt Hình 3D",
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
     resources: ["catalog", "meta", "stream"],
@@ -33,7 +32,7 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// 1. Quét danh mục phim trang chủ
+// 1. Catalog lấy danh sách phim
 builder.defineCatalogHandler(async ({ type, id }) => {
     if (type === 'series' && id === 'yanhh3d_catalog') {
         try {
@@ -83,7 +82,7 @@ builder.defineCatalogHandler(async ({ type, id }) => {
     return { metas: [] };
 });
 
-// 2. Xử lý thông tin chi tiết từng phim (Bắt buộc phải có để Nuvio mở trang thông tin phim)
+// 2. Meta Handler - Cào danh sách các tập phim để hiện nút chọn Tập
 builder.defineMetaHandler(async ({ type, id }) => {
     if (id.startsWith('yanhh3d_')) {
         const targetUrl = decodeURIComponent(id.replace('yanhh3d_', ''));
@@ -99,13 +98,50 @@ builder.defineMetaHandler(async ({ type, id }) => {
                 img = 'https:' + img;
             }
 
+            const videos = [];
+            
+            // Cào các nút/link tập phim (dựa theo các lớp phổ biến như .halim-list-eps, .eps-list, a chứa chữ Tap)
+            $('.halim-list-eps a, .list-episodes a, .eps-list a, .entry-content a').each((i, el) => {
+                const epLink = $(el).attr('href');
+                const epText = $(el).text().trim();
+
+                // Lọc số tập từ tên nút (Ví dụ: "Tập 01", "1", "Tập 2")
+                const epMatch = epText.match(/\d+/);
+                if (epLink && epMatch) {
+                    const epNum = parseInt(epMatch[0], 10);
+                    const epId = 'yanhh3d_' + encodeURIComponent(epLink);
+
+                    videos.push({
+                        id: epId,
+                        title: `Tập ${epNum}`,
+                        season: 1,
+                        episode: epNum,
+                        released: new Date().toISOString()
+                    });
+                }
+            });
+
+            // Nếu không quét thấy các nút tập riêng lẻ, tạo mặc định Tập 1 dùng link hiện tại
+            if (videos.length === 0) {
+                videos.push({
+                    id: id,
+                    title: 'Tập 1',
+                    season: 1,
+                    episode: 1
+                });
+            } else {
+                // Sắp xếp tập theo thứ tự tăng dần 1, 2, 3...
+                videos.sort((a, b) => a.episode - b.episode);
+            }
+
             return {
                 meta: {
                     id: id,
                     type: 'series',
                     name: title,
                     poster: img,
-                    description: `Xem ${title} Vietsub chất lượng cao tại Yanhh3d.`
+                    description: `Xem ${title} Vietsub chất lượng cao tại Yanhh3d.`,
+                    videos: videos
                 }
             };
         } catch (err) {
@@ -122,7 +158,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
     return { meta: null };
 });
 
-// 3. Lấy link video để phát
+// 3. Stream Handler - Trả về nguồn phát video tương ứng với Tập đã chọn
 builder.defineStreamHandler(async ({ type, id }) => {
     let targetUrl = '';
 
@@ -160,4 +196,4 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
-    
+            
