@@ -13,40 +13,74 @@ const http = axios.create({
     timeout: 10000
 });
 
-// Manifest bắt buộc phải có "catalogs: []" để không bị lỗi Linter
+// 1. Khai báo Manifest có Catalog để hiện ở trang chính
 const manifest = {
     id: "org.nuvio.yanhh3d",
     version: "1.0.0",
     name: "Yanhh3d - Hoạt Hình 3D",
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
-    resources: ["stream"],
-    types: ["movie", "series"],
-    idPrefixes: ["tt"],
-    catalogs: []
+    resources: ["catalog", "stream"], // Thêm "catalog" vào đây
+    types: ["series", "movie"],
+    idPrefixes: ["yanhh3d_"],
+    catalogs: [
+        {
+            type: "series",
+            id: "yanhh3d_catalog",
+            name: "Yanhh3d - Phim Mới Cập Nhật"
+        }
+    ]
 };
 
 const builder = new addonBuilder(manifest);
 
-async function getStreamFromYanhh3d(imdbId, season, episode) {
-    try {
-        const imdbRes = await http.get(`https://v2.sg.media-imdb.com/suggestion/${imdbId[0]}/${imdbId}.json`);
-        if (!imdbRes.data?.d?.[0]) return null;
+// 2. Xử lý hiển thị danh sách phim ra trang chính
+builder.defineCatalogHandler(async ({ type, id }) => {
+    if (type === 'series' && id === 'yanhh3d_catalog') {
+        try {
+            const res = await http.get(DOMAIN);
+            const $ = cheerio.load(res.data);
+            const metas = [];
 
-        const title = imdbRes.data.d[0].l;
+            // Cào danh sách phim trang chủ yanhh3d
+            $('article.item-s, .halim-item').each((i, el) => {
+                const title = $(el).find('.entry-title, .halim-post-title').text().trim();
+                const link = $(el).find('a').first().attr('href');
+                const img = $(el).find('img').first().attr('src') || $(el).find('img').first().attr('data-src');
 
-        const searchUrl = `${DOMAIN}/?s=${encodeURIComponent(title)}`;
-        const searchRes = await http.get(searchUrl);
-        const $search = cheerio.load(searchRes.data);
+                if (title && link) {
+                    // Tạo ID riêng cho từng phim trên Yanhh3d
+                    const filmId = 'yanhh3d_' + encodeURIComponent(link);
+                    metas.push({
+                        id: filmId,
+                        type: 'series',
+                        name: title,
+                        poster: img && img.startsWith('//') ? 'https:' + img : img,
+                        description: `Xem ${title} Vietsub trên Yanhh3d`
+                    });
+                }
+            });
 
-        const movieLink = $search('article.item-s a').first().attr('href') || $search('.halim-item a').first().attr('href');
-        if (!movieLink) return null;
-
-        let targetEpisodeUrl = movieLink;
-        if (episode) {
-            targetEpisodeUrl = `${movieLink.replace(/\/$/, '')}-tap-${episode}`;
+            return { metas };
+        } catch (err) {
+            console.error("Lỗi cào Catalog:", err.message);
+            return { metas: [] };
         }
+    }
+    return { metas: [] };
+});
 
-        const epRes = await http.get(targetEpisodeUrl);
+// 3. Xử lý lấy link phát video khi bấm vào phim
+builder.defineStreamHandler(async ({ type, id }) => {
+    let targetUrl = '';
+
+    if (id.startsWith('yanhh3d_')) {
+        targetUrl = decodeURIComponent(id.replace('yanhh3d_', ''));
+    } else {
+        return { streams: [] };
+    }
+
+    try {
+        const epRes = await http.get(targetUrl);
         const $ep = cheerio.load(epRes.data);
 
         let streamUrl = $ep('iframe').attr('src') || $ep('#player-embed iframe').attr('src');
@@ -55,25 +89,18 @@ async function getStreamFromYanhh3d(imdbId, season, episode) {
             streamUrl = 'https:' + streamUrl;
         }
 
-        return streamUrl;
+        if (streamUrl) {
+            return {
+                streams: [
+                    {
+                        title: `Yanhh3d - Bản chuẩn [Vietsub]`,
+                        url: streamUrl
+                    }
+                ]
+            };
+        }
     } catch (err) {
-        return null;
-    }
-}
-
-builder.defineStreamHandler(async ({ type, id }) => {
-    const [imdbId, season, episode] = id.split(':');
-    const streamUrl = await getStreamFromYanhh3d(imdbId, season, episode);
-
-    if (streamUrl) {
-        return {
-            streams: [
-                {
-                    title: `Yanhh3d - Tập ${episode || 1} [Vietsub]`,
-                    url: streamUrl
-                }
-            ]
-        };
+        console.error("Lỗi lấy stream:", err.message);
     }
 
     return { streams: [] };
