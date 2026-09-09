@@ -15,7 +15,7 @@ const http = axios.create({
 
 const manifest = {
     id: "org.nuvio.yanhh3d",
-    version: "1.0.1",
+    version: "1.0.2",
     name: "Yanhh3d - Hoạt Hình 3D",
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
     resources: ["catalog", "stream"],
@@ -32,19 +32,24 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+// Quét toàn bộ các đường link chứa phim trên trang chủ
 builder.defineCatalogHandler(async ({ type, id }) => {
     if (type === 'series' && id === 'yanhh3d_catalog') {
         try {
             const res = await http.get(DOMAIN);
             const $ = cheerio.load(res.data);
             const metas = [];
+            const addedLinks = new Set();
 
-            // Quét các ô chứa phim trên yanhh3d
-            $('article, .item-s, .halim-item, .post-item').each((i, el) => {
-                const title = $(el).find('.entry-title, .halim-post-title, h2, h3').first().text().trim();
-                const link = $(el).find('a').first().attr('href');
+            // Tìm tất cả các thẻ <a> có chứa đường dẫn bài viết/phim
+            $('a').each((i, el) => {
+                const link = $(el).attr('href');
+                if (!link || !link.startsWith(DOMAIN) || addedLinks.has(link)) return;
+
+                // Tìm tên phim trong thuộc tính title hoặc nội dung thẻ
+                const title = $(el).attr('title') || $(el).find('img').attr('alt') || $(el).text().trim();
                 
-                // Tìm link ảnh từ nhiều thuộc tính khác nhau (lazy loading)
+                // Tìm ảnh poster bên trong thẻ a hoặc các thẻ con
                 const imgEl = $(el).find('img').first();
                 let img = imgEl.attr('src') || imgEl.attr('data-src') || imgEl.attr('data-lazy-src') || imgEl.attr('srcset');
 
@@ -52,8 +57,13 @@ builder.defineCatalogHandler(async ({ type, id }) => {
                     img = img.split(' ')[0];
                 }
 
-                if (title && link) {
-                    let posterUrl = img || '';
+                // Lọc bỏ các đường link không phải là link phim (chuyên mục, trang chủ, tag...)
+                const isExcluded = link.includes('/category/') || link.includes('/tag/') || link.includes('/page/') || link === DOMAIN || link === `${DOMAIN}/`;
+
+                if (title && title.length > 2 && img && !isExcluded) {
+                    addedLinks.add(link);
+
+                    let posterUrl = img;
                     if (posterUrl.startsWith('//')) {
                         posterUrl = 'https:' + posterUrl;
                     }
@@ -115,4 +125,3 @@ builder.defineStreamHandler(async ({ type, id }) => {
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
-    
