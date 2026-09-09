@@ -15,7 +15,7 @@ const http = axios.create({
 
 const manifest = {
     id: "org.nuvio.yanhh3d",
-    version: "1.0.5",
+    version: "1.0.6",
     name: "Yanhh3d - Hoạt Hình 3D",
     description: "Nguồn phát Hoạt Hình 3D Trung Quốc từ yanhh3d.ee",
     resources: ["catalog", "meta", "stream"],
@@ -75,7 +75,7 @@ builder.defineCatalogHandler(async ({ type, id }) => {
     return { metas: [] };
 });
 
-// 2. Meta Handler - Quét triệt để danh sách tập và hình ảnh
+// 2. Meta Handler
 builder.defineMetaHandler(async ({ type, id }) => {
     if (id.startsWith('yanhh3d_')) {
         const targetUrl = decodeURIComponent(id.replace('yanhh3d_', ''));
@@ -87,20 +87,16 @@ builder.defineMetaHandler(async ({ type, id }) => {
             const imgEl = $('.poster img, .entry-content img, article img, .halim-thumb img').first();
             let poster = imgEl.attr('src') || imgEl.attr('data-src') || imgEl.attr('data-lazy-src');
 
-            if (poster && poster.startsWith('//')) {
-                poster = 'https:' + poster;
-            }
+            if (poster && poster.startsWith('//')) poster = 'https:' + poster;
 
             const videos = [];
             const addedEps = new Set();
 
-            // Quét tất cả thẻ a có khả năng là liên kết tập phim
             $('a').each((i, el) => {
                 const epLink = $(el).attr('href');
                 const epText = $(el).text().trim();
 
                 if (epLink && epLink.startsWith(DOMAIN) && !addedEps.has(epLink)) {
-                    // Kiểm tra nếu text hoặc đường dẫn có chứa dấu hiệu của tập (tap-1, tap-2, hoặc chữ Tập X)
                     const isEpUrl = /\/tap-\d+/i.test(epLink) || /tập\s*\d+/i.test(epText) || /ep\s*\d+/i.test(epText);
                     
                     if (isEpUrl) {
@@ -113,14 +109,13 @@ builder.defineMetaHandler(async ({ type, id }) => {
                             title: `Tập ${epNum}`,
                             season: 1,
                             episode: epNum,
-                            thumbnail: poster, // Gán poster phim làm hình đại diện cho tập
+                            thumbnail: poster,
                             released: new Date().toISOString()
                         });
                     }
                 }
             });
 
-            // Trường hợp phim lẻ hoặc trang hiện tại chính là 1 tập phim
             if (videos.length === 0) {
                 videos.push({
                     id: id,
@@ -146,19 +141,14 @@ builder.defineMetaHandler(async ({ type, id }) => {
             };
         } catch (err) {
             return {
-                meta: {
-                    id: id,
-                    type: 'series',
-                    name: "Yanhh3d Movie",
-                    description: "Chi tiết phim Yanhh3d"
-                }
+                meta: { id: id, type: 'series', name: "Yanhh3d Movie", description: "Chi tiết phim Yanhh3d" }
             };
         }
     }
     return { meta: null };
 });
 
-// 3. Stream Handler
+// 3. Stream Handler - Quét đa Server & Lấy nguồn phát trực tiếp
 builder.defineStreamHandler(async ({ type, id }) => {
     if (!id.startsWith('yanhh3d_')) return { streams: [] };
 
@@ -167,23 +157,49 @@ builder.defineStreamHandler(async ({ type, id }) => {
     try {
         const epRes = await http.get(targetUrl);
         const $ep = cheerio.load(epRes.data);
+        const streams = [];
 
-        let streamUrl = $ep('iframe').attr('src') || $ep('#player-embed iframe').attr('src') || $ep('.watch-player iframe').attr('src');
+        // Quét tất cả các thẻ iframe (các server nhúng)
+        $ep('iframe').each((i, el) => {
+            let src = $ep(el).attr('src') || $ep(el).attr('data-src');
+            if (src) {
+                if (src.startsWith('//')) src = 'https:' + src;
 
-        if (streamUrl && streamUrl.startsWith('//')) {
-            streamUrl = 'https:' + streamUrl;
+                const serverName = $ep(el).parent().text().trim() || `Server ${i + 1}`;
+                streams.push({
+                    title: `Yanhh3d - ${serverName}`,
+                    url: src
+                });
+            }
+        });
+
+        // Quét thêm các Server từ danh sách nút chọn Server (nếu có)
+        $ep('.server-item, .halim-server-item, #player-option').each((i, el) => {
+            const serverTitle = $ep(el).text().trim() || `Server Dự Phòng ${i + 1}`;
+            const link = $ep(el).attr('data-embed') || $ep(el).attr('data-link');
+
+            if (link) {
+                let fullLink = link.startsWith('//') ? 'https:' + link : link;
+                streams.push({
+                    title: `Yanhh3d - ${serverTitle}`,
+                    url: fullLink
+                });
+            }
+        });
+
+        // Nếu chỉ tìm thấy 1 link mặc định
+        if (streams.length === 0) {
+            let defaultSrc = $ep('#player-embed iframe').attr('src') || $ep('.watch-player iframe').attr('src');
+            if (defaultSrc) {
+                if (defaultSrc.startsWith('//')) defaultSrc = 'https:' + defaultSrc;
+                streams.push({
+                    title: `Yanhh3d - Server Vietsub Chuẩn`,
+                    url: defaultSrc
+                });
+            }
         }
 
-        if (streamUrl) {
-            return {
-                streams: [
-                    {
-                        title: `Yanhh3d - Server Vietsub`,
-                        url: streamUrl
-                    }
-                ]
-            };
-        }
+        return { streams };
     } catch (err) {
         console.error("Lỗi lấy stream:", err.message);
     }
